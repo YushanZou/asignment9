@@ -1,0 +1,184 @@
+---
+title: "object-state-changes"
+output: html_document
+---
+# import packages
+```{r setup, include=FALSE}
+# load required packages
+library(tidyverse)
+library (ggthemes)
+library(rstatix)
+library(ggpubr)
+library(emmeans)
+
+```
+
+# import data+bind data
+
+```{r}
+# write code to read in prolific+sona data csv
+final_data = read_csv("combined.csv")
+#prolific and sona data were combined beforehand in excel. 
+
+# write code to read in sona data csv
+#prolific_data=read_csv()
+#sona_data = read_csv("sona_1.csv")
+
+# see if the files have the same number of columns
+#ncol(prolific_data)
+#ncol(sona_data)
+
+#sona_data=sona_data%>%
+#select(-c(sona_id))
+#final_data = rbind(prolific_data, sona_data)
+```
+
+## basic descriptives
+```{r}
+## how many total participants?
+length(final_data %>% pull(subject) %>% unique())
+ 
+## how many total trials per participant?
+final_data%>%
+  group_by(subject, typeoftrial) %>%
+  count()
+#There are 78 picture trials per participant, including practice trials 
+```
+
+## exclusions
+```{r}
+## exclude filler items & non-picture trials
+## exclude practice trials
+final_data=final_data%>%
+  select(subject, rt, typeoftrial, trialcondition, correct) %>%
+filter(typeoftrial == "picture" & 
+trialcondition %in% c("Heavy_Matched","Light_Matched","Heavy_Contradictory","Light_Contradictory"))  
+
+
+## calculate subject accuracy
+final_data=final_data%>%
+  mutate(accuracy = ifelse(correct == 'true', 1, 0))
+
+subject_acc=
+  final_data %>%
+group_by(subject) %>%
+summarize(mean_acc=mean(accuracy))
+
+
+## exclude incorrect responses
+final_data=final_data %>%
+  filter(accuracy==1)
+```
+
+
+```{r}
+## exclude subjects with accuracy < your pre-registered criteria
+subject_acc=subject_acc %>%
+filter(mean_acc>=0.6)
+
+## find out total participants after exclusion
+subject_acc%>%
+  nrow()
+```
+
+# transforming RT
+
+```{r}
+# make sure rt is numeric using mutate
+final_data=final_data%>%
+mutate(rt = as.numeric(rt)) 
+
+# draw histogram of RTs: does it look normal?
+hist(final_data$rt)
+
+# transform rt to log rt using mutate
+final_data=final_data%>%
+  mutate(logRT=log(rt, base=10))
+
+# draw histogram of log-RTs: does it look normal?
+hist(final_data$logRT)
+#it does look normal
+```
+
+
+```{r}
+final_data=final_data%>% ungroup()
+final_data=final_data%>%
+separate(trialcondition, into=c("weight", "word"), sep="_") 
+```
+
+# compute mean RTs
+```{r}
+# compute mean rts for each cell of your design at the subject level
+mean_rt=final_data%>%
+group_by(subject, weight, word) %>%
+summarise(mean_rt=mean(rt)) %>%
+mutate(logrt=log(mean_rt, base=10))
+
+```
+
+
+# check assumptions
+
+## identify and remove outliers
+```{r}
+outliers=mean_rt %>%
+  group_by(weight, word)%>%
+  identify_outliers(mean_rt)
+
+sids=outliers %>% filter(is.extreme==TRUE)%>%pull(subject)
+mean_rt=mean_rt %>% filter(!subject %in% sids)
+```
+
+## check normality
+```{r}
+mean_rt%>%
+  group_by(weight, word) %>%
+  shapiro_test(mean_rt)
+
+ggqqplot(mean_rt, "logrt", ggtheme=theme_bw())+facet_grid(weight ~ word, labeller='label_both')
+```
+
+# conduct repeated measures anova
+```{r}
+mean_rt=mean_rt%>%ungroup()
+rm.aov=anova_test(data=mean_rt, dv = logrt, wid = subject, within = c(weight, word))
+get_anova_table(rm.aov)
+```
+
+# conduct post-hoc tests (if needed)
+
+#Write code that would decompose a significant interaction, if there was one, OR analyze main effects if there was no significant interaction.
+```{r}
+mean_rt%>%
+  group_by(word)%>%
+  anova_test(dv=logrt, wid=subject, within=weight) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method="bonferroni")
+
+mean_rt%>%
+  group_by(weight)%>%
+  anova_test(dv=logrt, wid=subject, within=word) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method="bonferroni")
+```
+
+# visualize raw RT pattern
+```{r}
+mean_scores=final_data%>%
+  group_by(weight, word)%>%
+  summarise(mean=mean(rt),
+            sd=sd(rt))
+
+mean_scores%>%
+  ggplot(aes(x=weight, y=mean, group=word, fill=word))+geom_col(position='dodge')+geom_errorbar(aes(ymin=mean-sd, ymax=mean+sd),width=.25,position=position_dodge(width=0.9))+scale_fill_wsj()+theme_few()
+```
+
+
+
+
+
+
+
+
+
